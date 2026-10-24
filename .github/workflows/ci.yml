@@ -1,0 +1,71 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_USER: booking_owner
+          POSTGRES_DB: booking
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U booking_owner -d booking"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Initialize isolated integration database
+        shell: bash
+        run: |
+          command_password=$(openssl rand -hex 32)
+          query_password=$(openssl rand -hex 32)
+          token_secret=$(openssl rand -hex 32)
+          echo "::add-mask::$command_password"
+          echo "::add-mask::$query_password"
+          echo "::add-mask::$token_secret"
+          docker exec -i ${{ job.services.postgres.id }} psql -U booking_owner -d booking -v ON_ERROR_STOP=1 -v command_password="$command_password" -v query_password="$query_password" < database/001-init.sql
+          echo "TEST_DATABASE_CONNECTION=Host=localhost;Database=booking;Username=booking_owner" >> "$GITHUB_ENV"
+          echo "TEST_COMMAND_CONNECTION=Host=localhost;Database=booking;Username=booking_command;Password=$command_password" >> "$GITHUB_ENV"
+          echo "TEST_QUERY_CONNECTION=Host=localhost;Database=booking;Username=booking_query;Password=$query_password" >> "$GITHUB_ENV"
+          echo "BOOKING_TOKEN_SECRET=$token_secret" >> "$GITHUB_ENV"
+      - name: Backend tests and coverage
+        run: |
+          dotnet test backend/Booking.Tests/Booking.Tests.csproj --configuration Release --collect:"Code Coverage" --settings backend/Booking.Tests/coverage.runsettings --results-directory artifacts/backend
+          python scripts/check-coverage.py artifacts/backend
+      - name: Frontend tests, coverage and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run test:coverage
+          npm run build
+      - name: Build deployment images
+        run: |
+          docker build --build-arg SERVICE=Booking.CommandApi -t booking-command:test .
+          docker build --build-arg SERVICE=Booking.QueryApi -t booking-query:test .
+          docker build -t booking-web:test frontend
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            artifacts/backend
+            frontend/coverage

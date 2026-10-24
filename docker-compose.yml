@@ -1,0 +1,79 @@
+name: branch-booking
+services:
+  database:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: booking
+      POSTGRES_USER: booking_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      COMMAND_DB_PASSWORD: ${COMMAND_DB_PASSWORD:?Set COMMAND_DB_PASSWORD in .env}
+      QUERY_DB_PASSWORD: ${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./database/001-init.sql:/schema/001-init.sql:ro
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/001-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking_owner -d booking"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks: [data]
+    security_opt: [no-new-privileges:true]
+    logging: &logging
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  query-api:
+    build:
+      context: .
+      args: {SERVICE: Booking.QueryApi}
+    environment:
+      ConnectionStrings__Database: Host=database;Database=booking;Username=booking_query;Password=${QUERY_DB_PASSWORD:?Set QUERY_DB_PASSWORD in .env};Maximum Pool Size=30;Timeout=5;Command Timeout=10
+      ASPNETCORE_ENVIRONMENT: Production
+    depends_on:
+      database: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [data, edge]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  command-api:
+    build:
+      context: .
+      args: {SERVICE: Booking.CommandApi}
+    environment:
+      ConnectionStrings__Database: Host=database;Database=booking;Username=booking_command;Password=${COMMAND_DB_PASSWORD:?Set COMMAND_DB_PASSWORD in .env};Maximum Pool Size=30;Timeout=5;Command Timeout=10
+      Booking__TokenSecret: ${BOOKING_TOKEN_SECRET:?Set BOOKING_TOKEN_SECRET in .env}
+      ASPNETCORE_ENVIRONMENT: Production
+    depends_on:
+      database: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [data, edge]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  web:
+    build:
+      context: ./frontend
+    ports: ["127.0.0.1:${APP_PORT:-8080}:8080"]
+    depends_on: [query-api, command-api]
+    restart: unless-stopped
+    networks: [edge]
+    read_only: true
+    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+volumes:
+  postgres-data:
+networks:
+  data: {internal: true}
+  edge:

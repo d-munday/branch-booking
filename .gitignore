@@ -1,0 +1,16 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/coverage/
+**/TestResults/
+.env
+.env.*.local
+.local/
+artifacts/
+*.user
+*.suo
+*.tsbuildinfo
+.DS_Store
+**/__pycache__/
+*.py[cod]
