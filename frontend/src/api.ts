@@ -6,6 +6,7 @@ import type {
   Receipt,
   Service,
 } from "./types";
+import { validationMessages } from "./validations.constants";
 
 export class ApiError extends Error {
   constructor(
@@ -28,7 +29,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   } catch (error) {
     if (init.signal?.aborted) throw error;
     throw new ApiError(
-      "We couldn’t connect. Check your connection and try again.",
+      validationMessages.connectionFailed,
       0,
     );
   }
@@ -36,14 +37,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const problem = await response.json().catch(() => ({}));
     throw new ApiError(
       response.status === 409
-        ? "That time was just booked. Please choose another time."
+        ? validationMessages.slotUnavailable
         : response.status === 429
-          ? "A few too many requests. Please wait a moment and try again."
+          ? validationMessages.tooManyRequests
           : response.status >= 500
-            ? "Our booking service is temporarily unavailable. Please try again."
+            ? validationMessages.serviceUnavailable
             : problem.detail ||
               problem.title ||
-              "Something went wrong. Please try again.",
+              validationMessages.unexpectedError,
       response.status,
       problem.errors,
     );

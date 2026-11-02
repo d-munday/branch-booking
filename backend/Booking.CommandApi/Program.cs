@@ -19,8 +19,8 @@ public partial class CommandProgram
         builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
             context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier);
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton(new ReceiptFactory(builder.Configuration["Booking:TokenSecret"] ?? throw new InvalidOperationException("Set Booking:TokenSecret.")));
-        var connection = new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException("Set ConnectionStrings:Database."))
+        builder.Services.AddSingleton(new ReceiptFactory(builder.Configuration["Booking:TokenSecret"] ?? throw new InvalidOperationException(ValidationConstants.Messages.TokenSecretRequired)));
+        var connection = new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException(ValidationConstants.Messages.DatabaseConnectionRequired))
         { Timeout = 5, CommandTimeout = 5, MaxPoolSize = 50, ApplicationName = "booking-command" };
         builder.Services.AddSingleton(NpgsqlDataSource.Create(connection.ConnectionString));
         builder.Services.AddSingleton<PostgresBookingWriter>();
@@ -46,7 +46,7 @@ public partial class CommandProgram
             catch (NpgsqlException)
             {
                 context.Response.StatusCode = 503;
-                await Results.Problem(statusCode: 503, title: "Booking is temporarily unavailable. Please try again with the same request.").ExecuteAsync(context);
+                await Results.Problem(statusCode: 503, title: ValidationConstants.Messages.BookingUnavailable).ExecuteAsync(context);
             }
         });
         app.UseRateLimiter();
@@ -59,7 +59,7 @@ public partial class CommandProgram
         app.MapPost("/api/bookings/receipt", (BookingRequest request, HttpContext context, ReceiptFactory receipts) =>
         {
             if (!Guid.TryParseExact(context.Request.Headers["Idempotency-Key"], "D", out var key) || key == Guid.Empty)
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["idempotencyKey"] = ["Provide a UUID Idempotency-Key header."] });
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["idempotencyKey"] = [ValidationConstants.Messages.IdempotencyKeyRequired] });
             var errors = BookingRules.ValidateForRecovery(request);
             return errors.Count != 0 ? Results.ValidationProblem(errors) : Results.Ok(receipts.Create(key, BookingRules.Normalize(request)));
         }).RequireRateLimiting("booking");
@@ -67,7 +67,7 @@ public partial class CommandProgram
             ReceiptFactory receipts, TimeProvider clock, CancellationToken cancellationToken) =>
         {
             if (!Guid.TryParseExact(context.Request.Headers["Idempotency-Key"], "D", out var key) || key == Guid.Empty)
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["idempotencyKey"] = ["Provide a UUID Idempotency-Key header."] });
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["idempotencyKey"] = [ValidationConstants.Messages.IdempotencyKeyRequired] });
             var errors = BookingRules.Validate(request, clock);
             if (errors.Count != 0) return Results.ValidationProblem(errors);
             var booking = BookingRules.Normalize(request);
@@ -78,7 +78,7 @@ public partial class CommandProgram
             {
                 InsertOutcome.Created => Results.Created($"/api/bookings/{receipt.Id}", receipt),
                 InsertOutcome.Replayed => Results.Json(receipt, statusCode: 202),
-                _ => Results.Problem(statusCode: 409, title: "That time was just booked. Please choose another time.")
+                _ => Results.Problem(statusCode: 409, title: ValidationConstants.Messages.SlotUnavailable)
             };
         }).RequireRateLimiting("booking");
         app.Run();

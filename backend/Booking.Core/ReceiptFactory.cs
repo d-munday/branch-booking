@@ -9,7 +9,7 @@ public sealed class ReceiptFactory
     private readonly byte[] secret;
     public ReceiptFactory(string tokenSecret)
     {
-        if (tokenSecret.Length < 32) throw new ArgumentException("Booking:TokenSecret must be at least 32 characters.", nameof(tokenSecret));
+        if (tokenSecret.Length < 32) throw new ArgumentException(ValidationConstants.Messages.TokenSecretTooShort, nameof(tokenSecret));
         secret = Encoding.UTF8.GetBytes(tokenSecret);
     }
 

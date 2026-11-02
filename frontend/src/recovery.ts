@@ -1,5 +1,6 @@
 import type { BookingRequest, Receipt } from "./types";
 import { validateDetails } from "./booking";
+import { validationPatterns } from "./validations.constants";
 
 export interface PendingAttempt {
   body: string;
@@ -18,7 +19,7 @@ export function restoreAttempt(): {
       !saved ||
       typeof saved.body !== "string" ||
       typeof saved.key !== "string" ||
-      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(saved.key)
+      !validationPatterns.uuid.test(saved.key)
     )
       return null;
     const request = JSON.parse(saved.body);
@@ -39,10 +40,10 @@ export function restoreAttempt(): {
     )
       return null;
     if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(request.date) ||
+      !validationPatterns.date.test(request.date) ||
       new Date(`${request.date}T12:00:00Z`).toISOString().slice(0, 10) !==
         request.date ||
-      !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(request.time) ||
+      !validationPatterns.time.test(request.time) ||
       !request.branchId ||
       !request.serviceId ||
       Object.keys(validateDetails(request)).length

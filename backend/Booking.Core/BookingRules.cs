@@ -16,22 +16,22 @@ public static partial class BookingRules
     {
         var errors = new Dictionary<string, string[]>();
         void Reject(string key, string message) => errors[key] = [message];
-        if (!Catalog.BranchIds.Contains(request.BranchId ?? "")) Reject("branchId", "Choose a valid branch.");
-        if (!Catalog.ServiceIds.Contains(request.ServiceId ?? "")) Reject("serviceId", "Choose a valid service.");
+        if (!Catalog.BranchIds.Contains(request.BranchId ?? "")) Reject("branchId", ValidationConstants.Messages.InvalidBranch);
+        if (!Catalog.ServiceIds.Contains(request.ServiceId ?? "")) Reject("serviceId", ValidationConstants.Messages.InvalidService);
         var validDate = DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date);
         var validTime = TimeOnly.TryParseExact(request.Time, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var time);
         var now = LocalNow(clock);
         if (!validDate || (enforceWindow && (date < DateOnly.FromDateTime(now.DateTime) || date > DateOnly.FromDateTime(now.DateTime).AddDays(30))))
-            Reject("date", "Choose a date within the next 30 days.");
+            Reject("date", ValidationConstants.Messages.InvalidDate);
         if (!validTime || (validDate && (enforceWindow ? !IsBookable(date, time, now) : !IsOpenTime(date, time))))
-            Reject("time", enforceWindow ? "Choose an open time at least one hour from now." : "Provide the original appointment time.");
-        if (!ValidName(request.FirstName)) Reject("firstName", "Enter your first name (1–80 characters).");
-        if (!ValidName(request.LastName)) Reject("lastName", "Enter your last name (1–80 characters).");
+            Reject("time", enforceWindow ? ValidationConstants.Messages.InvalidTime : ValidationConstants.Messages.OriginalTimeRequired);
+        if (!ValidName(request.FirstName)) Reject("firstName", ValidationConstants.Messages.InvalidFirstName);
+        if (!ValidName(request.LastName)) Reject("lastName", ValidationConstants.Messages.InvalidLastName);
         var email = request.Email?.Trim();
         if (email is null || email.Length > 254 || !MailAddress.TryCreate(email, out var parsed) || parsed.Address != email || !parsed.Host.Contains('.'))
-            Reject("email", "Enter a valid email address.");
-        if (!PhonePattern().IsMatch(Regex.Replace(request.Phone?.Trim() ?? "", "[\\s()-]", ""))) Reject("phone", "Enter a South African number, such as 082 123 4567.");
-        if (!request.Consent) Reject("consent", "Please agree to the use of your details for this appointment.");
+            Reject("email", ValidationConstants.Messages.InvalidEmail);
+        if (!PhonePattern().IsMatch(Regex.Replace(request.Phone?.Trim() ?? "", ValidationConstants.Patterns.PhoneFormatting, ""))) Reject("phone", ValidationConstants.Messages.InvalidPhone);
+        if (!request.Consent) Reject("consent", ValidationConstants.Messages.ConsentRequired);
         return errors;
     }
 
@@ -39,7 +39,7 @@ public static partial class BookingRules
         DateOnly.ParseExact(request.Date!, "yyyy-MM-dd", CultureInfo.InvariantCulture),
         TimeOnly.ParseExact(request.Time!, "HH:mm", CultureInfo.InvariantCulture),
         request.FirstName!.Trim(), request.LastName!.Trim(), request.Email!.Trim().ToLowerInvariant(),
-        Regex.Replace(request.Phone!, "[\\s()-]", ""));
+        Regex.Replace(request.Phone!, ValidationConstants.Patterns.PhoneFormatting, ""));
 
     public static bool IsBookable(DateOnly date, TimeOnly time, DateTimeOffset now)
     {
@@ -62,6 +62,6 @@ public static partial class BookingRules
         && time >= new TimeOnly(8, 0) && time < ClosingTime(date) && time.Minute % 30 == 0 && time.Second == 0;
     private static bool ValidName(string? value) => value?.Trim() is { Length: > 0 and <= 80 } name && name.Any(char.IsLetter)
         && name.All(c => char.IsLetter(c) || char.GetUnicodeCategory(c) == UnicodeCategory.NonSpacingMark || c is ' ' or '\'' or '-' or '’');
-    [GeneratedRegex(@"^(?:0[1-8][0-9]|\+27[1-8][0-9])[0-9]{7}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(ValidationConstants.Patterns.SouthAfricanPhone, RegexOptions.CultureInvariant)]
     private static partial Regex PhonePattern();
 }

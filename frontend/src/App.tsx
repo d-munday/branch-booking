@@ -32,6 +32,7 @@ import { bookableDates, dateLabel, validateDetails } from "./booking";
 import { Confirmation, HelpDialog, Summary } from "./components";
 import { clearAttempt, restoreAttempt, saveAttempt } from "./recovery";
 import type { PendingAttempt } from "./recovery";
+import { validationMessages, validationPatterns } from "./validations.constants";
 
 const emptyDetails: Details = {
   firstName: "",
@@ -76,7 +77,7 @@ export default function App() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState(
     restored
-      ? "A previous booking request needs checking. Retrieve your confirmation before starting another appointment."
+      ? validationMessages.pendingBooking
       : "",
   );
   const [submitting, setSubmitting] = useState(false);
@@ -104,7 +105,7 @@ export default function App() {
       .catch(() => {
         if (!controller.signal.aborted)
           setCatalogError(
-            "We couldn’t load our branches. Please try again in a moment.",
+            validationMessages.branchesUnavailable,
           );
       })
       .finally(() => {
@@ -124,7 +125,7 @@ export default function App() {
       .then(setAvailability)
       .catch(() => {
         if (!controller.signal.aborted)
-          setSlotError("We couldn’t check availability. Please try again.");
+          setSlotError(validationMessages.availabilityUnavailable);
       })
       .finally(() => {
         if (!controller.signal.aborted) setSlotsLoading(false);
@@ -156,7 +157,7 @@ export default function App() {
       firstName: details.firstName.trim(),
       lastName: details.lastName.trim(),
       email: details.email.trim().toLowerCase(),
-      phone: details.phone.replace(/[\s()-]/g, ""),
+      phone: details.phone.replace(validationPatterns.phoneFormatting, ""),
       branchId,
       serviceId,
       date,
@@ -194,7 +195,7 @@ export default function App() {
         saved.lastName !== body.lastName ||
         saved.phone !== body.phone
       )
-        throw new Error("Saved booking does not match request");
+        throw new Error(validationMessages.bookingMismatch);
       clearAttempt();
       setRecovering(false);
       setBooking(saved);
@@ -219,7 +220,7 @@ export default function App() {
           ]),
         );
         setFieldErrors(errors);
-        setError("Please check your details and try again.");
+        setError(validationMessages.invalidDetails);
       } else {
         const uncertain =
           !!submission.receipt ||
@@ -233,12 +234,12 @@ export default function App() {
         setRecovering(uncertain);
         setError(
           submission.receipt
-            ? "Your booking was saved, but we couldn’t load the confirmation. Keep this page open and retry to retrieve it safely."
+            ? validationMessages.confirmationUnavailable
             : uncertain
-              ? "We couldn’t confirm the result of your request. Keep this page open and retry with these details so we can safely recover your booking."
+              ? validationMessages.bookingResultUnknown
               : failure instanceof Error
                 ? failure.message
-                : "We couldn’t complete your booking. Please try again.",
+                : validationMessages.bookingFailed,
         );
       }
     } finally {
@@ -544,8 +545,8 @@ export default function App() {
                   {!filtered.length && (
                     <div className="empty-state">
                       <Search size={26} />
-                      <h3>No branches found</h3>
-                      <p>Try a different suburb or choose another province.</p>
+                      <h3>{validationMessages.noBranchesFound}</h3>
+                      <p>{validationMessages.branchSearchHint}</p>
                       <button
                         className="text-button"
                         onClick={() => {
@@ -652,11 +653,8 @@ export default function App() {
                       {!availability.slots.some((slot) => slot.available) && (
                         <div className="empty-state">
                           <CalendarDays size={27} />
-                          <h3>No times left on this date</h3>
-                          <p>
-                            Choose another date to find your next available
-                            appointment.
-                          </p>
+                          <h3>{validationMessages.noSlotsAvailable}</h3>
+                          <p>{validationMessages.selectAnotherDate}</p>
                         </div>
                       )}
                     </>

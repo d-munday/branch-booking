@@ -1,4 +1,5 @@
 import type { Booking, Details } from "./types";
+import { validationMessages, validationPatterns } from "./validations.constants";
 
 const zone = "Africa/Johannesburg";
 export function localDate(now = new Date()): string {
@@ -30,18 +31,22 @@ export function bookableDates(today = localDate()): string[] {
 export function validateDetails(details: Details): Record<string, string> {
   const errors: Record<string, string> = {};
   if (!details.firstName.trim() || details.firstName.trim().length > 80)
-    errors.firstName = "Enter your first name (up to 80 characters).";
+    errors.firstName = validationMessages.firstName;
   if (!details.lastName.trim() || details.lastName.trim().length > 80)
-    errors.lastName = "Enter your last name (up to 80 characters).";
+    errors.lastName = validationMessages.lastName;
   if (
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email.trim()) ||
+    !validationPatterns.email.test(details.email.trim()) ||
     details.email.length > 254
   )
-    errors.email = "Enter a valid email address.";
-  if (!/^(?:0|\+27)[6-8][0-9]{8}$/.test(details.phone.replace(/[\s()-]/g, "")))
-    errors.phone = "Enter a South African mobile number, e.g. 082 123 4567.";
+    errors.email = validationMessages.email;
+  if (
+    !validationPatterns.phone.test(
+      details.phone.replace(validationPatterns.phoneFormatting, ""),
+    )
+  )
+    errors.phone = validationMessages.phone;
   if (!details.consent)
-    errors.consent = "Please agree so we can process your booking.";
+    errors.consent = validationMessages.consent;
   return errors;
 }
 export function calendarFile(

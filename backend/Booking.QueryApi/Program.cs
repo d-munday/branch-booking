@@ -14,7 +14,7 @@ public partial class QueryProgram
         builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
             context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier);
         builder.Services.AddSingleton(TimeProvider.System);
-        var connection = new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException("Set ConnectionStrings:Database."))
+        var connection = new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException(ValidationConstants.Messages.DatabaseConnectionRequired))
         { Timeout = 5, CommandTimeout = 5, MaxPoolSize = 50, ApplicationName = "booking-query" };
         builder.Services.AddSingleton(NpgsqlDataSource.Create(connection.ConnectionString));
         builder.Services.AddSingleton<PostgresBookingReader>();
@@ -29,7 +29,7 @@ public partial class QueryProgram
             catch (NpgsqlException)
             {
                 context.Response.StatusCode = 503;
-                await Results.Problem(statusCode: 503, title: "Appointments are temporarily unavailable. Please try again shortly.").ExecuteAsync(context);
+                await Results.Problem(statusCode: 503, title: ValidationConstants.Messages.AppointmentsUnavailable).ExecuteAsync(context);
             }
         });
         app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }));
@@ -45,10 +45,10 @@ public partial class QueryProgram
             var now = BookingRules.LocalNow(clock);
             var today = DateOnly.FromDateTime(now.DateTime);
             if (!DateOnly.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day) || day < today || day > today.AddDays(30))
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["date"] = ["Choose a date within the next 30 days."] });
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["date"] = [ValidationConstants.Messages.InvalidDate] });
             var occupied = await reader.OccupiedAsync(branchId, day, cancellationToken);
             return occupied is null
-                ? Results.ValidationProblem(new Dictionary<string, string[]> { ["branchId"] = ["Choose a valid branch."] })
+                ? Results.ValidationProblem(new Dictionary<string, string[]> { ["branchId"] = [ValidationConstants.Messages.InvalidBranch] })
                 : Results.Ok(new Availability(date, BookingRules.Slots(day, now, occupied)));
         });
         app.MapGet("/api/bookings/{id:guid}", async (Guid id, HttpContext context, IBookingReader reader, CancellationToken cancellationToken) =>
