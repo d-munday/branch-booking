@@ -18,12 +18,13 @@ public partial class CommandProgram
         builder.Logging.AddJsonConsole();
         builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
             context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier);
-        builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton(new ReceiptFactory(builder.Configuration["Booking:TokenSecret"] ?? throw new InvalidOperationException(ValidationConstants.Messages.TokenSecretRequired)));
+        builder.Services.AddSingleton<TimeProvider>(_ => TimeProvider.System);
+        var tokenSecret = builder.Configuration["Booking:TokenSecret"] ?? throw new InvalidOperationException(ValidationConstants.Messages.TokenSecretRequired);
+        builder.Services.AddSingleton(_ => new ReceiptFactory(tokenSecret));
         var connection = new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException(ValidationConstants.Messages.DatabaseConnectionRequired))
         { Timeout = 5, CommandTimeout = 5, MaxPoolSize = 50, ApplicationName = "booking-command" };
-        builder.Services.AddSingleton(NpgsqlDataSource.Create(connection.ConnectionString));
-        builder.Services.AddSingleton<PostgresBookingWriter>();
+        builder.Services.AddSingleton<NpgsqlDataSource>(_ => NpgsqlDataSource.Create(connection.ConnectionString));
+        builder.Services.AddSingleton(services => new PostgresBookingWriter(services.GetRequiredService<NpgsqlDataSource>()));
         builder.Services.AddSingleton<IBookingWriter>(services => services.GetRequiredService<PostgresBookingWriter>());
         builder.Services.AddSingleton<IDatabaseProbe>(services => services.GetRequiredService<PostgresBookingWriter>());
         builder.Services.AddRateLimiter(options =>
@@ -38,6 +39,9 @@ public partial class CommandProgram
             });
         });
         var app = builder.Build();
+        // Validate configured services before accepting requests.
+        _ = app.Services.GetRequiredService<ReceiptFactory>();
+        _ = app.Services.GetRequiredService<NpgsqlDataSource>();
         app.UseExceptionHandler();
         app.Use(async (context, next) =>
         {

@@ -13,14 +13,16 @@ public partial class QueryProgram
         builder.Logging.AddJsonConsole();
         builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
             context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier);
-        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton<TimeProvider>(_ => TimeProvider.System);
         var connection = new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException(ValidationConstants.Messages.DatabaseConnectionRequired))
         { Timeout = 5, CommandTimeout = 5, MaxPoolSize = 50, ApplicationName = "booking-query" };
-        builder.Services.AddSingleton(NpgsqlDataSource.Create(connection.ConnectionString));
-        builder.Services.AddSingleton<PostgresBookingReader>();
+        builder.Services.AddSingleton<NpgsqlDataSource>(_ => NpgsqlDataSource.Create(connection.ConnectionString));
+        builder.Services.AddSingleton(services => new PostgresBookingReader(services.GetRequiredService<NpgsqlDataSource>()));
         builder.Services.AddSingleton<IBookingReader>(services => services.GetRequiredService<PostgresBookingReader>());
         builder.Services.AddSingleton<IDatabaseProbe>(services => services.GetRequiredService<PostgresBookingReader>());
         var app = builder.Build();
+        // Validate configured services before accepting requests.
+        _ = app.Services.GetRequiredService<NpgsqlDataSource>();
         app.UseExceptionHandler();
         app.Use(async (context, next) =>
         {
