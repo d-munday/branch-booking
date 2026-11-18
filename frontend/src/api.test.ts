@@ -54,6 +54,7 @@ describe("HTTP booking client", () => {
   it.each([
     [409, {}, "That time was just booked"],
     [429, {}, "too many requests"],
+    [500, { detail: "internal database error" }, "unexpected error"],
     [503, { title: "Internal secret" }, "temporarily unavailable"],
     [400, { detail: "Choose another date" }, "Choose another date"],
     [404, { title: "Not found" }, "Not found"],

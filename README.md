@@ -101,7 +101,11 @@ The writer issues no `SELECT`, `UPDATE`, `DELETE` or `INSERT ... RETURNING`. Pos
 
 The simulation intentionally needs no queue or worker: confirmation text and booking are inserted together. There is no gap in which a booking is saved but its simulated confirmation disappears. A real provider integration would need a transactional outbox and separate publication/acknowledgment services that preserve the database privilege boundary.
 
-Services are stateless with bounded pooled connections. Nginx resolves service names through Docker DNS, so additional replicas can be started without fixed container names:
+Each API replica owns a database connection pool. Compose sets a maximum of 30 connections per replica, a 5-second connection timeout and a 10-second command timeout. Explicit connection-string settings take precedence over application defaults.
+
+Each command replica has separate one-minute limits for new bookings and receipt recovery. Set `BOOKINGS_PER_MINUTE` and `RECEIPTS_PER_MINUTE` in Compose to positive integers. Both default to 60. A throttled command returns HTTP 429 with a `Retry-After` delay when available. The gateway also uses separate per-client limits for booking traffic and receipt access.
+
+Nginx resolves service names through Docker DNS so additional replicas can be started without fixed container names.
 
 ```sh
 docker compose up -d --scale query-api=2 --scale command-api=2
@@ -187,6 +191,8 @@ npm run build
 Use a fresh backend results directory each run; the gate rejects multiple reports to avoid accepting stale coverage. `scripts/test.ps1 -UnitOnly` is available for a partial check when PostgreSQL is unavailable and deliberately does not assert full backend coverage.
 
 Both backend line and branch coverage and frontend coverage are gated at **80%**. Backend tests cover booking rules, malformed input, authorization, idempotency, HTTP error behavior, real SQL permissions and concurrent slot allocation. Frontend tests cover the customer journey and recovery from loading, validation, network and conflict failures. Coverage is a guardrail; tests assert observable behavior rather than implementation details. CI runs tests against PostgreSQL, enforces the gates and builds all deployment images.
+
+CI also runs `npm audit --package-lock-only --include=dev --audit-level=moderate` from `frontend` as an independent check. The audit reports both runtime and build-tool dependencies. Use `npm audit --omit=dev` to inspect runtime dependencies separately.
 
 ## Develop locally
 

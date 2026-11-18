@@ -990,7 +990,7 @@ footer button {
   background: #f2f6f9;
   border-radius: 6px;
   margin-top: 24px;
-  color: #658093;
+  color: #506779;
 }
 .info-note p {
   font-size: 10px;
@@ -1047,7 +1047,7 @@ footer button {
 .privacy-note {
   display: flex;
   gap: 10px;
-  color: #73899a;
+  color: #506779;
   background: #f3f6f8;
   border-radius: 6px;
   padding: 17px;
@@ -2057,7 +2057,7 @@ footer button {
 }
 .field input::placeholder {
   font-size: 12px;
-  color: #748896;
+  color: #586e7e;
 }
 .field-error {
   font-size: 11px;

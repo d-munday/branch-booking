@@ -9,6 +9,7 @@ export const validationMessages = {
   tooManyRequests: "A few too many requests. Please wait a moment and try again.",
   serviceUnavailable:
     "Our booking service is temporarily unavailable. Please try again.",
+  serverError: "The booking service encountered an unexpected error.",
   unexpectedError: "Something went wrong. Please try again.",
   pendingBooking:
     "A previous booking request needs checking. Retrieve your confirmation before starting another appointment.",
@@ -22,7 +23,6 @@ export const validationMessages = {
     "Your booking was saved, but we couldn’t load the confirmation. Keep this page open and retry to retrieve it safely.",
   bookingResultUnknown:
     "We couldn’t confirm the result of your request. Keep this page open and retry with these details so we can safely recover your booking.",
-  bookingFailed: "We couldn’t complete your booking. Please try again.",
   noBranchesFound: "No branches found",
   branchSearchHint: "Try a different suburb or choose another province.",
   noSlotsAvailable: "No times left on this date",

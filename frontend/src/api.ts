@@ -8,6 +8,12 @@ import type {
 } from "./types";
 import { validationMessages } from "./validations.constants";
 
+const statusMessages: Partial<Record<number, string>> = {
+  409: validationMessages.slotUnavailable,
+  429: validationMessages.tooManyRequests,
+  500: validationMessages.serverError,
+};
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -36,15 +42,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     const problem = await response.json().catch(() => ({}));
     throw new ApiError(
-      response.status === 409
-        ? validationMessages.slotUnavailable
-        : response.status === 429
-          ? validationMessages.tooManyRequests
-          : response.status >= 500
-            ? validationMessages.serviceUnavailable
-            : problem.detail ||
-              problem.title ||
-              validationMessages.unexpectedError,
+      statusMessages[response.status] ??
+        (response.status >= 500
+          ? validationMessages.serviceUnavailable
+          : problem.detail || problem.title || validationMessages.unexpectedError),
       response.status,
       problem.errors,
     );

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -19,10 +19,9 @@ import {
   Sparkles,
   Wallet,
 } from "lucide-react";
-import { api, ApiError } from "./api";
+import { api } from "./api";
 import type {
   Availability,
-  Booking,
   BookingRequest,
   Branch,
   Details,
@@ -31,7 +30,8 @@ import type {
 import { bookableDates, dateLabel, validateDetails } from "./booking";
 import { Confirmation, HelpDialog, Summary } from "./components";
 import { clearAttempt, restoreAttempt, saveAttempt } from "./recovery";
-import type { PendingAttempt } from "./recovery";
+import { resolveSubmission, submissionReducer } from "./submission";
+import type { SubmissionState } from "./submission";
 import { validationMessages, validationPatterns } from "./validations.constants";
 
 const emptyDetails: Details = {
@@ -80,15 +80,24 @@ export default function App() {
       ? validationMessages.pendingBooking
       : "",
   );
-  const [submitting, setSubmitting] = useState(false);
-  const [recovering, setRecovering] = useState(!!restored);
-  const [booking, setBooking] = useState<Booking | null>(null);
+  const [submission, dispatch] = useReducer(
+    submissionReducer,
+    restored,
+    (initial): SubmissionState => initial
+      ? { status: "pending", attempt: initial.pending }
+      : { status: "editing" },
+  );
+  const submitting = submission.status === "submitting";
+  const recovering = submission.status === "pending";
+  const booking = submission.status === "confirmed" ? submission.booking : null;
   const [help, setHelp] = useState(false);
-  const pending = useRef<PendingAttempt | null>(restored?.pending || null);
   const heading = useRef<HTMLHeadingElement>(null);
   const branch = branches.find((item) => item.id === branchId);
   const service = services.find((item) => item.id === serviceId);
   const dates = bookableDates();
+  const selectedTimeAvailable =
+    availability?.date === date &&
+    availability.slots.some((slot) => slot.time === time && slot.available);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -122,7 +131,15 @@ export default function App() {
     setAvailability(null);
     api
       .availability(branchId, date, controller.signal)
-      .then(setAvailability)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setAvailability(result);
+        setTime((selected) =>
+          result.slots.some((slot) => slot.time === selected && slot.available)
+            ? selected
+            : "",
+        );
+      })
       .catch(() => {
         if (!controller.signal.aborted)
           setSlotError(validationMessages.availabilityUnavailable);
@@ -143,6 +160,7 @@ export default function App() {
   }
 
   async function submit() {
+    if (submitting || booking) return;
     const validation = validateDetails(details);
     setFieldErrors(validation);
     setError("");
@@ -163,100 +181,53 @@ export default function App() {
       date,
       time,
     };
-    const serialized = JSON.stringify(body);
-    if (pending.current?.body !== serialized)
-      pending.current = { body: serialized, key: crypto.randomUUID() };
-    const submission = pending.current;
-    saveAttempt(submission);
-    setSubmitting(true);
-    try {
-      let saved: Booking | undefined;
-      if (recovering && !submission.receipt) {
-        const recoveredReceipt = await api.recover(body, submission.key);
-        try {
-          saved = await api.booking(recoveredReceipt);
-          submission.receipt = recoveredReceipt;
-        } catch (failure) {
-          if (!(failure instanceof ApiError) || failure.status !== 404)
-            throw failure;
-        }
-      }
-      if (!saved) {
-        submission.receipt ??= await api.book(body, submission.key);
-        saved = await api.booking(submission.receipt);
-      }
-      if (
-        saved.branchId !== branchId ||
-        saved.serviceId !== serviceId ||
-        saved.date !== date ||
-        saved.time !== time ||
-        saved.email.toLowerCase() !== body.email ||
-        saved.firstName !== body.firstName ||
-        saved.lastName !== body.lastName ||
-        saved.phone !== body.phone
-      )
-        throw new Error(validationMessages.bookingMismatch);
-      clearAttempt();
-      setRecovering(false);
-      setBooking(saved);
+    const attempt = recovering
+      ? submission.attempt
+      : { body: JSON.stringify(body), key: crypto.randomUUID() };
+    saveAttempt(attempt);
+    dispatch({ type: "start", attempt });
+    const outcome = await resolveSubmission(body, attempt, recovering);
+    if (outcome.status === "pending") {
+      dispatch({ type: "defer", receipt: outcome.receipt });
+      setError(outcome.message);
+      return;
+    }
+    clearAttempt();
+    if (outcome.status === "confirmed") {
+      dispatch({ type: "confirm", booking: outcome.booking });
       go(3);
-    } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 409) {
-        clearAttempt();
-        setRecovering(false);
-        pending.current = null;
-        setTime("");
-        go(1);
-        setError(failure.message);
-        setSlotAttempt((value) => value + 1);
-      } else if (failure instanceof ApiError && failure.status === 400) {
-        clearAttempt();
-        pending.current = null;
-        setRecovering(false);
-        const errors = Object.fromEntries(
-          Object.entries(failure.errors).map(([name, messages]) => [
-            name.charAt(0).toLowerCase() + name.slice(1),
-            messages[0],
-          ]),
-        );
-        setFieldErrors(errors);
-        setError(validationMessages.invalidDetails);
-      } else {
-        const uncertain =
-          !!submission.receipt ||
-          !(failure instanceof ApiError) ||
-          failure.status === 0 ||
-          failure.status >= 500;
-        if (!uncertain) {
-          clearAttempt();
-          pending.current = null;
-        }
-        setRecovering(uncertain);
-        setError(
-          submission.receipt
-            ? validationMessages.confirmationUnavailable
-            : uncertain
-              ? validationMessages.bookingResultUnknown
-              : failure instanceof Error
-                ? failure.message
-                : validationMessages.bookingFailed,
-        );
+      return;
+    }
+    dispatch({ type: "reset" });
+    const failure = outcome.error;
+    const errors = Object.fromEntries(
+      Object.entries(failure.errors).map(([name, messages]) => [
+        name.charAt(0).toLowerCase() + name.slice(1),
+        messages[0],
+      ]),
+    );
+    setFieldErrors(errors);
+    if (failure.status === 409 || errors.date || errors.time) {
+      setTime("");
+      if (errors.date) {
+        setDate(bookableDates()[0]);
+        setDatePage(0);
       }
-    } finally {
-      setSubmitting(false);
+      go(1);
+      setError([errors.date, errors.time].filter(Boolean).join(" ") || failure.message);
+    } else {
+      setError(failure.status === 400 ? validationMessages.invalidDetails : failure.message);
     }
   }
 
   function restart() {
     clearAttempt();
-    setRecovering(false);
-    setBooking(null);
+    dispatch({ type: "reset" });
     setDetails(emptyDetails);
     setFieldErrors({});
     setBranchId("");
     setServiceId("");
     setTime("");
-    pending.current = null;
     go(0);
   }
 
@@ -766,7 +737,7 @@ export default function App() {
                     disabled={
                       submitting ||
                       (step === 0 && (!branchId || !serviceId)) ||
-                      (step === 1 && (!time || slotsLoading || !!slotError))
+                      (step === 1 && (!selectedTimeAvailable || slotsLoading || !!slotError))
                     }
                     onClick={
                       step < 2

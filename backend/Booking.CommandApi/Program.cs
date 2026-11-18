@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Threading.RateLimiting;
 using Booking.Core;
+using Booking.Hosting;
 using Microsoft.AspNetCore.RateLimiting;
 using Npgsql;
 
@@ -21,38 +23,29 @@ public partial class CommandProgram
         builder.Services.AddSingleton<TimeProvider>(_ => TimeProvider.System);
         var tokenSecret = builder.Configuration["Booking:TokenSecret"] ?? throw new InvalidOperationException(ValidationConstants.Messages.TokenSecretRequired);
         builder.Services.AddSingleton(_ => new ReceiptFactory(tokenSecret));
-        var connection = new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException(ValidationConstants.Messages.DatabaseConnectionRequired))
-        { Timeout = 5, CommandTimeout = 5, MaxPoolSize = 50, ApplicationName = "booking-command" };
-        builder.Services.AddSingleton<NpgsqlDataSource>(_ => NpgsqlDataSource.Create(connection.ConnectionString));
+        builder.AddBookingDataSource("booking-command");
         builder.Services.AddSingleton(services => new PostgresBookingWriter(services.GetRequiredService<NpgsqlDataSource>()));
         builder.Services.AddSingleton<IBookingWriter>(services => services.GetRequiredService<PostgresBookingWriter>());
         builder.Services.AddSingleton<IDatabaseProbe>(services => services.GetRequiredService<PostgresBookingWriter>());
         builder.Services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            options.AddFixedWindowLimiter("booking", limiter =>
+            options.OnRejected = (rejection, _) =>
             {
-                limiter.PermitLimit = 60;
-                limiter.Window = TimeSpan.FromMinutes(1);
-                limiter.QueueLimit = 0;
-                limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-            });
+                if (rejection.Lease.TryGetMetadata(MetadataName.RetryAfter, out var delay))
+                    rejection.HttpContext.Response.Headers.RetryAfter =
+                        Math.Ceiling(delay.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+                return ValueTask.CompletedTask;
+            };
+            AddMinuteLimit(options, "booking", builder.Configuration.GetValue("RateLimits:BookingsPerMinute", 60));
+            AddMinuteLimit(options, "receipt", builder.Configuration.GetValue("RateLimits:ReceiptsPerMinute", 60));
         });
         var app = builder.Build();
         // Validate configured services before accepting requests.
         _ = app.Services.GetRequiredService<ReceiptFactory>();
         _ = app.Services.GetRequiredService<NpgsqlDataSource>();
         app.UseExceptionHandler();
-        app.Use(async (context, next) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            try { await next(context); }
-            catch (NpgsqlException)
-            {
-                context.Response.StatusCode = 503;
-                await Results.Problem(statusCode: 503, title: ValidationConstants.Messages.BookingUnavailable).ExecuteAsync(context);
-            }
-        });
+        app.UseBookingDatabaseErrors(ValidationConstants.Messages.BookingUnavailable);
         app.UseRateLimiter();
         app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }));
         app.MapGet("/health/ready", async (IDatabaseProbe probe, CancellationToken cancellationToken) =>
@@ -66,7 +59,7 @@ public partial class CommandProgram
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["idempotencyKey"] = [ValidationConstants.Messages.IdempotencyKeyRequired] });
             var errors = BookingRules.ValidateForRecovery(request);
             return errors.Count != 0 ? Results.ValidationProblem(errors) : Results.Ok(receipts.Create(key, BookingRules.Normalize(request)));
-        }).RequireRateLimiting("booking");
+        }).RequireRateLimiting("receipt");
         app.MapPost("/api/bookings", async (BookingRequest request, HttpContext context, IBookingWriter writer,
             ReceiptFactory receipts, TimeProvider clock, CancellationToken cancellationToken) =>
         {
@@ -86,5 +79,16 @@ public partial class CommandProgram
             };
         }).RequireRateLimiting("booking");
         app.Run();
+    }
+
+    private static void AddMinuteLimit(RateLimiterOptions options, string policy, int permits)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(permits);
+        options.AddFixedWindowLimiter(policy, limiter =>
+        {
+            limiter.PermitLimit = permits;
+            limiter.Window = TimeSpan.FromMinutes(1);
+            limiter.QueueLimit = 0;
+        });
     }
 }

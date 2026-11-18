@@ -1,5 +1,6 @@
 using System.Globalization;
 using Booking.Core;
+using Booking.Hosting;
 using Npgsql;
 
 namespace Booking.QueryApi;
@@ -14,9 +15,7 @@ public partial class QueryProgram
         builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
             context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier);
         builder.Services.AddSingleton<TimeProvider>(_ => TimeProvider.System);
-        var connection = new NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException(ValidationConstants.Messages.DatabaseConnectionRequired))
-        { Timeout = 5, CommandTimeout = 5, MaxPoolSize = 50, ApplicationName = "booking-query" };
-        builder.Services.AddSingleton<NpgsqlDataSource>(_ => NpgsqlDataSource.Create(connection.ConnectionString));
+        builder.AddBookingDataSource("booking-query");
         builder.Services.AddSingleton(services => new PostgresBookingReader(services.GetRequiredService<NpgsqlDataSource>()));
         builder.Services.AddSingleton<IBookingReader>(services => services.GetRequiredService<PostgresBookingReader>());
         builder.Services.AddSingleton<IDatabaseProbe>(services => services.GetRequiredService<PostgresBookingReader>());
@@ -24,16 +23,7 @@ public partial class QueryProgram
         // Validate configured services before accepting requests.
         _ = app.Services.GetRequiredService<NpgsqlDataSource>();
         app.UseExceptionHandler();
-        app.Use(async (context, next) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            try { await next(context); }
-            catch (NpgsqlException)
-            {
-                context.Response.StatusCode = 503;
-                await Results.Problem(statusCode: 503, title: ValidationConstants.Messages.AppointmentsUnavailable).ExecuteAsync(context);
-            }
-        });
+        app.UseBookingDatabaseErrors(ValidationConstants.Messages.AppointmentsUnavailable);
         app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }));
         app.MapGet("/health/ready", async (IDatabaseProbe probe, CancellationToken cancellationToken) =>
         {

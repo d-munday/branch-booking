@@ -14,7 +14,7 @@ All API paths use `/api`. JSON uses camelCase. Dates and times are branch-local 
 
 `GET /api/bookings/{id}` with `Authorization: Bearer <accessToken>` => `{id,reference,branchId,serviceId,date,time,firstName,lastName,email,phone,status,confirmation:{simulated,channel,subject,body}}`. Unknown/incorrect token => 404. Status `confirmed`; confirmation channel `email`, simulated `true`. No real external email/SMS is sent. Front end renders persisted confirmation. Do not put access tokens in URLs or logs.
 
-Health: `/health/live` process liveness and `/health/ready` connection readiness (no table query required on insert-only writer).
+Health: `/health/live` process liveness and `/health/ready` connection readiness (no table query required on insert-only writer). Transient database failures return 503. Unexpected permanent database failures return 500 with a trace ID for support.
 
 Database roles: command service INSERT-only on bookings; query service SELECT-only on catalog and bookings. No service uses the schema-owner role. Schema migrations are a distinct one-shot administration task. Command API MUST NOT issue SELECT, UPDATE, DELETE, or INSERT RETURNING (RETURNING requires SELECT privileges). Receipt generated in application before INSERT. Shared database constraints enforce branch/service integrity and unique slot allocation across replicas.
 

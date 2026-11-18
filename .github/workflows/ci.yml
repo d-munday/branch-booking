@@ -7,6 +7,17 @@ permissions:
   contents: read
 
 jobs:
+  frontend-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check frontend runtime and development dependencies
+        working-directory: frontend
+        run: npm audit --package-lock-only --include=dev --audit-level=moderate
+
   test:
     runs-on: ubuntu-latest
     services:

@@ -426,12 +426,12 @@ describe("booking recovery", () => {
     expect(sessionStorage.getItem("branch-booking:pending")).toBeNull();
   });
 
-  it("keeps recovery locked when the receipt service itself is temporarily unavailable", async () => {
+  it.each([429, 503])("retains the original key across a recovery rejection (%i)", async (status) => {
     vi.mocked(api.book).mockRejectedValueOnce(
       new ApiError("Connection interrupted", 0),
     );
     vi.mocked(api.recover).mockRejectedValueOnce(
-      new ApiError("Service unavailable", 503),
+      new ApiError("Please retry the lookup.", status),
     );
     render(<App />);
     await detailsStep();
@@ -440,6 +440,8 @@ describe("booking recovery", () => {
       screen.getByRole("button", { name: "Confirm appointment" }),
     );
     await screen.findByRole("button", { name: "Retrieve confirmation" });
+    const originalAttempt = sessionStorage.getItem("branch-booking:pending");
+    expect(originalAttempt).not.toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Retrieve confirmation" }),
     );
@@ -447,7 +449,44 @@ describe("booking recovery", () => {
     await screen.findByRole("button", { name: "Retrieve confirmation" });
     expect(screen.getByLabelText("Email address")).toBeDisabled();
     expect(api.book).toHaveBeenCalledOnce();
-    expect(sessionStorage.getItem("branch-booking:pending")).not.toBeNull();
+    expect(sessionStorage.getItem("branch-booking:pending")).toBe(originalAttempt);
+    fireEvent.click(screen.getByRole("button", { name: "Retrieve confirmation" }));
+    await screen.findByRole("heading", { name: "You’re booked, Thandi." });
+    const key = vi.mocked(api.book).mock.calls[0][1];
+    expect(vi.mocked(api.recover).mock.calls.map(([, usedKey]) => usedKey)).toEqual([key, key]);
+    expect(api.book).toHaveBeenCalledOnce();
+  });
+
+  it("clears a selected time that became unavailable while entering details", async () => {
+    render(<App />);
+    await detailsStep();
+    vi.mocked(api.availability).mockResolvedValueOnce({
+      date: bookableDates()[0],
+      slots: [{ time: "09:00", available: false }, { time: "10:00", available: true }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    const previous = await screen.findByRole("button", { name: "09:00 unavailable" });
+    expect(previous).toBeDisabled();
+    expect(previous).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "10:00" }));
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it.each(["Date", "time"])("shows the server's %s error on the scheduling step and preserves contact details", async (field) => {
+    const message = "Please select a new appointment " + field.toLowerCase() + ".";
+    vi.mocked(api.book).mockRejectedValueOnce(new ApiError("Invalid", 400, { [field]: [message] }));
+    render(<App />);
+    await detailsStep();
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm appointment" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("heading", { name: "Find your kind of time." })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("button", { name: "10:00" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByLabelText("Last name")).toHaveValue("Nkosi");
+    expect(screen.getByRole("checkbox")).toBeChecked();
   });
 
   it("keeps details editable after an explicit rate-limit rejection", async () => {
@@ -470,6 +509,25 @@ describe("booking recovery", () => {
       screen.getByRole("button", { name: "Confirm appointment" }),
     );
     await screen.findByRole("heading", { name: "You’re booked, Alex." });
+  });
+
+  it("retains the key if the same-key write is throttled after a recovery lookup misses", async () => {
+    vi.mocked(api.book)
+      .mockRejectedValueOnce(new ApiError("Disconnected", 0))
+      .mockRejectedValueOnce(new ApiError("Retry the lookup later.", 429));
+    vi.mocked(api.booking).mockRejectedValueOnce(new ApiError("Missing", 404));
+    render(<App />);
+    await detailsStep();
+    fillDetails();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm appointment" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retrieve confirmation" }));
+    await screen.findByText("Retry the lookup later.");
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Retrieve confirmation" }));
+    await screen.findByRole("heading", { name: "You’re booked, Thandi." });
+    const key = vi.mocked(api.book).mock.calls[0][1];
+    expect(vi.mocked(api.book).mock.calls[1][1]).toBe(key);
+    expect(vi.mocked(api.recover).mock.calls[1][1]).toBe(key);
   });
 
   it("returns customers to fresh availability after a booking conflict", async () => {

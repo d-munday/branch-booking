@@ -48,6 +48,8 @@ services:
     environment:
       ConnectionStrings__Database: Host=database;Database=booking;Username=booking_command;Password=${COMMAND_DB_PASSWORD:?Set COMMAND_DB_PASSWORD in .env};Maximum Pool Size=30;Timeout=5;Command Timeout=10
       Booking__TokenSecret: ${BOOKING_TOKEN_SECRET:?Set BOOKING_TOKEN_SECRET in .env}
+      RateLimits__BookingsPerMinute: ${BOOKINGS_PER_MINUTE:-60}
+      RateLimits__ReceiptsPerMinute: ${RECEIPTS_PER_MINUTE:-60}
       ASPNETCORE_ENVIRONMENT: Production
     depends_on:
       database: {condition: service_healthy}

@@ -91,7 +91,7 @@ public sealed class CommandApiTests
     public async Task Database_failure_returns_retryable_problem_without_internal_details()
     {
         using var factory = new ApiFactory<CommandProgram>();
-        factory.Writer.Exception = new NpgsqlException("sensitive database internals");
+        factory.Writer.Exception = new NpgsqlException("sensitive database internals", new TimeoutException());
         using var client = factory.CreateClient();
         using var response = await Post(client, BookingRulesTests.ValidRequest, Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
@@ -114,7 +114,7 @@ public sealed class CommandApiTests
     public async Task Readiness_reports_database_failure()
     {
         using var factory = new ApiFactory<CommandProgram>();
-        factory.Probe.Exception = new NpgsqlException("offline");
+        factory.Probe.Exception = new NpgsqlException("offline", new IOException());
         using var client = factory.CreateClient();
         using var response = await client.GetAsync("/health/ready");
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
@@ -225,6 +225,32 @@ public sealed class CommandApiTests
         return client.SendAsync(request);
     }
 
+    [Fact]
+    public async Task Receipt_recovery_has_its_own_configured_budget_after_bookings_are_throttled()
+    {
+        using var fixture = new ApiFactory<CommandProgram>();
+        using var host = fixture.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("RateLimits:BookingsPerMinute", "1");
+            builder.UseSetting("RateLimits:ReceiptsPerMinute", "2");
+        });
+        using var client = host.CreateClient();
+        var key = Guid.NewGuid().ToString();
+        using var first = await Post(client, BookingRulesTests.ValidRequest, key);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        using var limited = await Post(client, BookingRulesTests.ValidRequest, key);
+        Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.InRange(limited.Headers.RetryAfter?.Delta?.TotalSeconds ?? 0, 1, 60);
+        for (var i = 0; i < 2; i++)
+        {
+            using var recovery = await Recover(client, BookingRulesTests.ValidRequest, key);
+            Assert.Equal(HttpStatusCode.OK, recovery.StatusCode);
+        }
+        using var limitedRecovery = await Recover(client, BookingRulesTests.ValidRequest, key);
+        Assert.Equal(HttpStatusCode.TooManyRequests, limitedRecovery.StatusCode);
+        Assert.InRange(limitedRecovery.Headers.RetryAfter?.Delta?.TotalSeconds ?? 0, 1, 60);
+    }
+
     private static Task<HttpResponseMessage> Post(HttpClient client, BookingRequest body, string? key)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/bookings") { Content = JsonContent.Create(body) };
@@ -329,7 +355,7 @@ public sealed class QueryApiTests
     public async Task Database_failure_returns_retryable_problem()
     {
         using var factory = new ApiFactory<QueryProgram>();
-        factory.Reader.Exception = new NpgsqlException("sensitive database internals");
+        factory.Reader.Exception = new NpgsqlException("sensitive database internals", new IOException());
         using var client = factory.CreateClient();
         using var response = await client.GetAsync("/api/branches");
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
