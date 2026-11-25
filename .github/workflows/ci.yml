@@ -19,7 +19,8 @@ jobs:
         run: npm audit --package-lock-only --include=dev --audit-level=moderate
 
   test:
-    runs-on: ubuntu-latest
+    # The .NET coverage profiler needs libxml2.so.2, which Ubuntu 24.04 provides.
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:18-bookworm
